@@ -1,6 +1,6 @@
 # Test audit
 
-Kept by this repo's owning session, per `~/Code/CLAUDE.md`, "Test self-audits". Newest first.
+Kept by this repo's maintainers: after each feature or fix, and at least every 14 days while it changes. Newest first.
 
 ## 2026-11-11: the webhook's signature check must say exactly `true`
 
@@ -11,7 +11,7 @@ Suite: 20 tests before, 21 after (`npx vitest run`, Payload 3.92, in-memory Mong
 - **Mutation checks.** 3 mutations, each a Python string replace restored byte for byte (SHA-256 checked). All 3 fail the new test: the old unawaited check put back; awaited but truthy; a throw rethrown.
 - **Skipped.** `configured` and `parse` weren't in the sweep's findings; a `parse` that throws still answers 500.
 
-## 2026-11-10: 0.1.0 (K78)
+## 2026-11-10: 0.1.0
 
 | Promise | Test |
 | --- | --- |

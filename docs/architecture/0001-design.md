@@ -1,6 +1,6 @@
 # 0001: Shipping design record
 
-Status: **accepted** (Platform approved the site wiring on 2026-11-10, with the five changes under "Platform's review"). Built as 0.1.0 on 2026-11-10; the security read's fixes are in `docs/decisions.md`.
+Status: **accepted** (the platform team approved the site wiring on 2026-11-10, with the five changes listed under its review below). Built as 0.1.0 on 2026-11-10; the security read's fixes are in `docs/decisions.md`.
 
 ## Context
 
@@ -16,9 +16,9 @@ The Captive Origins site buys postage for sample kits through EasyPost. That cod
 
 None of this is about kits. Only Kits uses it today, but any Payload site that ships things could.
 
-The owner approved the name on 2026-11-10 (`~/Code/ops/plugin-names.md`): **Shipping**,
-`@extantape/payload-plugin-shipping`, "EasyPost first provider". Helm assigned it to Kits (code-91) the same day.
-It's built in P4 alongside Sample Kits (`payload-plugin-sample-kits` `docs/architecture/0001-design.md`), under the
+The owner approved the name on 2026-11-10: **Shipping**,
+`@extantape/payload-plugin-shipping`, with EasyPost as the first provider. The kits team builds it,
+alongside Sample Kits (`payload-plugin-sample-kits` `docs/architecture/0001-design.md`), under the
 owner's rule: agnostic plugins that work on their own and connect through optional adapters.
 
 ## Decision
@@ -26,8 +26,8 @@ owner's rule: agnostic plugins that work on their own and connect through option
 Shipping owns **talking to carriers and the rules of the mail**. The plugin that owns the goods (Sample Kits, or a
 shop) owns **what is shipped, why, and where its records live**.
 
-MIT, as a general Payload plugin. Public from its first push, after the audit; the `gh repo create … --public`
-command goes to Helm for the owner's page. 0.x until it has seen real use.
+MIT, as a general Payload plugin. Public from its first push, after the audit, which the owner
+approves. 0.x until it has seen real use.
 
 ## What it owns
 
@@ -90,7 +90,7 @@ parcelFor(box, contents) / mailability(parcel)
   needs no change.
 - **Notifications:** Shipping sends nothing itself. Owners send their own messages.
 
-## Site wiring (for Platform's review)
+## Site wiring (for the platform team's review)
 
 1. `shipping({ provider: easyPost(...), webhookPath: '/easypost/webhook', beforeExternalCall:
    assertExternalSideEffectAllowed-wrapper })` in `src/plugins`.
@@ -100,7 +100,7 @@ parcelFor(box, contents) / mailability(parcel)
 4. The env names stay `EASYPOST_API_KEY` and `EASYPOST_WEBHOOK_SECRET`, read by the site and passed in. The plugin
    reads no environment itself.
 
-## Platform's review (2026-11-10)
+## The platform team's review (2026-11-10)
 
 Approved with five changes, all now part of this design:
 
@@ -114,12 +114,12 @@ Approved with five changes, all now part of this design:
    reaches outside: buy, refund, tracker create, quote, verify. If it throws, the call doesn't happen. The site wires it
    to `assertExternalSideEffectAllowed('easypost', …)`. On the site side, `src/lib/env.ts` also refuses a production key
    (`EZAK…`) unless `APP_ENV` is prod, with a test in `env.int.spec.ts`, so a copied prod key can't buy postage from
-   test. Platform offered to add that check itself.
+   test. The platform team offered to add that check itself.
 5. **The fake provider for tests only.** It's exported from a `/testing` subpath, so a production bundle can't select
    it by accident.
 
 The ledger: not in 0.1. Sample Kits already records each label, with its refund state, on the kit shipment, so the
-money trail exists; revisit when the shop buys labels. No collections, so nothing goes to Seed World.
+money trail exists; revisit when the shop buys labels. No collections, so the site's seed data needn't change.
 
 ## Tests (this repo)
 
