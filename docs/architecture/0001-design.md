@@ -4,7 +4,7 @@ Status: **accepted** (the platform team approved the site wiring on 2026-11-10, 
 
 ## Context
 
-The Captive Origins site buys postage for sample kits through EasyPost. That code sits in `src/lib/shipping` (about
+The first site buys postage for sample kits through EasyPost. That code sits in `src/lib/shipping` (about
 500 lines: `easypost`, `fakeEasyPost`, `address`, `trackerWebhook`, `notices`) and in the endpoint
 `src/endpoints/easypostWebhook.ts`. It covers:
 - addresses of three kinds (street, PO Box, General Delivery) and their checks;
@@ -69,7 +69,7 @@ parcelFor(box, contents) / mailability(parcel)
 ```
 
 **Rules, enforced and tested:**
-- **Side effects are the site's call.** Every buy and refund passes `beforeExternalCall` first. On Captive Origins it's
+- **Side effects are the site's call.** Every buy and refund passes `beforeExternalCall` first. On the first site it's
   wired to `assertExternalSideEffectAllowed`, which refuses on sandboxes and throwaway sites. With no hook, test mode
   (an `EZTK…` key) is allowed and production mode is refused, so the plugin fails closed.
 - **Addresses always come from the caller's records.** The plugin never relies on a carrier account's default sender
