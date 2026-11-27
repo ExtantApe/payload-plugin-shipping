@@ -22,6 +22,10 @@ export type CarrierProvider = {
   mode: Mode | null
   verify: (a: LabelAddress) => Promise<Verification>
   quote: (input: { from: LabelAddress; to: LabelAddress; parcel: Parcel; carrier?: 'any' | 'USPS'; reference: string }) => Promise<Quote>
+  /**
+   * Buys the quote's label. An unclear outcome (a timeout, a dropped connection, a 408, 429 or 5xx) is a
+   * `CarrierError` with code `MAYBE_BOUGHT`; any other `CarrierError` means nothing was bought.
+   */
   buy: (quote: Quote) => Promise<Label>
   refund: (shipmentId: string) => Promise<RefundStatus>
   /** Webhooks: is this raw body signed by the carrier, and what does it say? */
@@ -46,8 +50,12 @@ export type ShippingOptions = {
   provider: CarrierProvider
   /** A root endpoint path. Default '/easypost/webhook', so it serves /api/easypost/webhook. */
   webhookPath?: string
-  /** Runs before every call that costs money or reaches the carrier. Throw to refuse. Without it, production mode is refused. */
-  beforeExternalCall?: (args: { action: ExternalAction; mode: Mode; req?: Req }) => void | Promise<void>
+  /**
+   * Runs before every call that costs money or reaches the carrier. Answer exactly `true` (or a promise of it) to
+   * allow the call. Any other answer refuses it: `false`, nothing at all, `1`, `'yes'`, an object, a throw or a
+   * rejected promise. Without the hook, production mode is refused.
+   */
+  beforeExternalCall?: (args: { action: ExternalAction; mode: Mode; req?: Req }) => boolean | Promise<boolean>
   handlers?: ShippingHandler[]
   /** Events older than this are ignored, so a captured body can't be replayed later. Default 7. */
   maxEventAgeDays?: number

@@ -1,8 +1,29 @@
-import type { Config, Endpoint, Payload, PayloadRequest, Plugin } from 'payload'
+import type { CollectionConfig, Config, Endpoint, Payload, PayloadRequest, Plugin } from 'payload'
 
 import type { Resolved, ShippingHandler, ShippingOptions } from './types.js'
 
 const DAY = 86_400_000
+
+/** Where each purchase is claimed before the carrier is called, one record per quote. */
+export const PURCHASES_SLUG = 'shipping-purchases'
+const nobody = () => false
+
+/**
+ * One record per quote, with a unique key: the claim that keeps a quote to one purchase, across calls and across
+ * server instances. It holds the shipment's id and the label that came back (tracking number, label link, price),
+ * and no name or address. Only the plugin's own server code reads or writes it: every access rule answers no.
+ */
+const purchases: CollectionConfig = {
+  slug: PURCHASES_SLUG,
+  admin: { hidden: true },
+  access: { read: nobody, create: nobody, update: nobody, delete: nobody },
+  fields: [
+    { name: 'quoteKey', type: 'text', required: true, unique: true, index: true },
+    { name: 'status', type: 'select', required: true, defaultValue: 'buying', options: ['buying', 'bought', 'unknown'] },
+    { name: 'shipmentId', type: 'text', required: true },
+    { name: 'label', type: 'json' },
+  ],
+}
 /** Clocks differ a little; an event dated further ahead than this is refused. */
 const FUTURE_SKEW_MS = 10 * 60_000
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } })
@@ -82,6 +103,7 @@ export const shippingPlugin =
     return {
       ...config,
       custom: { ...config.custom, shipping: o },
+      collections: [...(config.collections ?? []), purchases],
       // A root endpoint, so the URL is exactly /api<webhookPath>.
       endpoints: [...(config.endpoints ?? []), webhook(o.webhookPath)],
     }

@@ -33,15 +33,19 @@ const digits = (n: number) => Array.from({ length: n }, () => randomInt(10)).joi
 
 /**
  * A fake carrier: EasyPost's shapes answered in memory. `calls` records what was asked, for tests. `fail` makes a
- * path answer with an error, `hang` makes it time out, and `offer` leaves services out of the rates.
+ * path answer with an error, `hang` makes it time out, `drop` cuts the connection, and `offer` leaves services out
+ * of the rates. Each call's headers are recorded too, without the key.
  */
-export function fakeCarrier(over: { mode?: 'test' | 'production'; refund?: 'submitted' | 'rejected'; webhookSecret?: string | null; fail?: (path: string) => { status: number; code: string } | null; hang?: (path: string) => boolean; timeoutMs?: number; offer?: (rate: { carrier: string; service: string }) => boolean } = {}) {
+export function fakeCarrier(over: { mode?: 'test' | 'production'; refund?: 'submitted' | 'rejected'; webhookSecret?: string | null; fail?: (path: string) => { status: number; code: string } | null; hang?: (path: string) => boolean; drop?: (path: string) => boolean; timeoutMs?: number; offer?: (rate: { carrier: string; service: string }) => boolean } = {}) {
   const shipments = new Map<string, { id: string; carrier: string; service: string; rate: string; fake: true }[]>()
-  const calls: { path: string; body: Record<string, unknown> }[] = []
+  const calls: { path: string; body: Record<string, unknown>; headers: Record<string, string> }[] = []
   const fetchImpl = (async (url: string, init?: RequestInit) => {
     const path = String(url).replace(API, '')
     const body = (init?.body ? JSON.parse(String(init.body)) : {}) as Record<string, unknown>
-    calls.push({ path, body })
+    const headers = Object.fromEntries(new Headers(init?.headers))
+    delete headers.authorization
+    calls.push({ path, body, headers })
+    if (over.drop?.(path)) throw new TypeError('fetch failed')
     if (over.hang?.(path)) {
       await new Promise((_, reject) => init?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('timed out'), { name: 'TimeoutError' }))))
     }

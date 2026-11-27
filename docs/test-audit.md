@@ -2,6 +2,23 @@
 
 Kept by this repo's maintainers: after each feature or fix, and at least every 14 days while it changes. Newest first.
 
+## 2026-11-26: buy each quote once, and the external-call hook allows only true
+
+Suite: 21 tests before, 27 after (`npx vitest run`, Payload 3.92, in-memory MongoDB, fake carrier). All six new tests were written first and failed against the old code.
+
+| Promise | Test |
+| --- | --- |
+| A second buy of a bought quote answers the first label, one carrier purchase call; `buyLabel` records its purchase too | `buying each quote once > answers a second buy…` |
+| Five buys at the same moment: one carrier purchase call, one label, the rest get it or `BUY_IN_PROGRESS`; one record; the collection refuses outside reads | `buying each quote once > holds under Promise.all…` |
+| The `Idempotency-Key` header: the same for the same quote, different for another, absent from other calls | `buying each quote once > sends the carrier an Idempotency-Key…` |
+| 408, 429, 500, 503, a dropped connection and a timeout are `MAYBE_BOUGHT` with the shipment id and the steps; a second buy is refused with no carrier call | `buying each quote once > reports a 408, 429, 5xx…` |
+| A clear refusal frees the quote; a claim that can't be stored buys nothing; a quote with no shipment is refused | `buying each quote once > frees the quote…` |
+| Every hook answer but exactly `true` refuses verify, quote, buy, buyLabel, buyReturn and refund, with nothing sent; `true` and a promise of it allow | `the external-call hook allows only true > refuses every answer…` |
+
+- **Mutation checks.** 6 mutations, each a string replace restored from a copy and compared byte for byte afterwards. All 6 fail at least one new test: the hook check made truthy; 408 and 429 treated as refusals; the unique key and the second-claim check both removed; an existing claim ignored; the claim removed after an unknown outcome; the header left out.
+- **Changed tests.** Two older hook tests now end their hook with `return true`, as the new contract asks.
+- **Gaps skipped.** Real EasyPost (never called, so whether it honors the header is unknown). Two server processes at once: the unique key is the database's, and one process with five concurrent calls exercises it. A failed write of the outcome after a purchase (the claim stays and locks the quote; it would need a fault injected between two writes). Databases other than MongoDB.
+
 ## 2026-11-11: the webhook's signature check must say exactly `true`
 
 Suite: 20 tests before, 21 after (`npx vitest run`, Payload 3.92, in-memory MongoDB, fake carrier). From an access sweep.
