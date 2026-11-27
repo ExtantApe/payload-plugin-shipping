@@ -2,7 +2,7 @@
 
 Shipping for Payload: addresses, carrier rates, labels, refunds of unused labels and tracking webhooks, with EasyPost as the first carrier provider.
 
-**Status:** 0.1.0, not on npm yet. 27 tests pass against Payload 3.92 with an in-memory MongoDB and a fake carrier. They cover addresses, parcels, buying, buying each quote once (in a row and at the same moment), returns, the side-effects hook and each answer it can give, production refused without it, a timed-out purchase, errors without addresses, and the webhook's 503, 401 (a custom provider's async check included), unknown, too-old, too-new, retry and refund cases, and purchases whose outcome is unclear. It has never called EasyPost: the request shapes follow EasyPost's documentation and are checked in test mode once a test key is saved. No site uses it yet.
+**Status:** 0.1.0, not on npm yet. 43 tests pass: 27 against Payload 3.92 with an in-memory MongoDB and a fake carrier, and 16 with no database, on the go-ahead, money, secrets and the webhook's refusals. The 27 cover addresses, parcels, buying, buying each quote once (in a row and at the same moment), returns, the side-effects hook and each answer it can give, production refused without it, a timed-out purchase, errors without addresses, and the webhook's 503, 401 (a custom provider's async check included), unknown, too-old, too-new, retry and refund cases, and purchases whose outcome is unclear. It has never called EasyPost: the request shapes follow EasyPost's documentation and are checked in test mode once a test key is saved. No site uses it yet.
 
 ## What it does
 
