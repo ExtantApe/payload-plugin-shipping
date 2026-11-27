@@ -17,6 +17,7 @@ import {
   parcelFor,
   quote,
   refund,
+  PURCHASES_SLUG,
   shippingPlugin,
   trackingLink,
   verifyAddress,
@@ -121,7 +122,7 @@ describe('buying postage', () => {
   it('runs the site’s hook before every outside call, and makes none when it refuses', async () => {
     const asked: string[] = []
     let refuse = false
-    const { p, fake } = await site('hook', { beforeExternalCall: ({ action }) => { asked.push(action); if (refuse) throw new Error('side effects are off here') } })
+    const { p, fake } = await site('hook', { beforeExternalCall: ({ action }) => { asked.push(action); if (refuse) throw new Error('side effects are off here'); return true } })
     const q = await quote(p, { from: shop, to: customer, parcel, reference: 'r' })
     await verifyAddress(p, customer)
     refuse = true
@@ -304,12 +305,169 @@ describe('what the security read found', () => {
 
   it('asks the site’s hook once per action for a whole purchase, and buys nothing when it refuses the purchase', async () => {
     const asked: string[] = []
-    const { p, fake } = await site('once', { beforeExternalCall: ({ action }) => { asked.push(action); if (action === 'buy' && asked.length > 2) throw new Error('no more postage') } })
+    const { p, fake } = await site('once', { beforeExternalCall: ({ action }) => { asked.push(action); if (action === 'buy' && asked.length > 2) throw new Error('no more postage'); return true } })
     await buyLabel(p, { from: shop, to: customer, parcel, reference: 'r' })
     expect(asked).toEqual(['buy', 'quote'])
     fake.calls.length = 0
     await expect(buyLabel(p, { from: shop, to: customer, parcel, reference: 'r' })).rejects.toThrow(/no more postage/)
     expect(fake.calls).toEqual([])
+  })
+})
+
+describe('buying each quote once', () => {
+  const buys = (fake: { calls: { path: string }[] }) => fake.calls.filter((c) => c.path.endsWith('/buy'))
+
+  it('answers a second buy of a bought quote with the first label, and calls the carrier once', async () => {
+    const { p, fake } = await site('once-seq')
+    const q = await quote(p, { from: shop, to: customer, parcel, reference: 'order-1' })
+    const first = await buy(p, q)
+    const second = await buy(p, q)
+    expect(second).toEqual(first)
+    expect(buys(fake)).toHaveLength(1)
+    // A label from buyLabel is on record too: buying its shipment again answers the same label.
+    const l = await buyLabel(p, { from: shop, to: customer, parcel, reference: 'order-2' })
+    expect(buys(fake)).toHaveLength(2)
+    expect(await buy(p, { shipmentId: l.shipmentId, rate: q.rate, rateCents: q.rateCents, mode: 'test' })).toEqual(l)
+    expect(buys(fake)).toHaveLength(2)
+  })
+
+  it('holds under Promise.all: one carrier call, one label, and the others get it or are refused', async () => {
+    const { p, fake } = await site('once-par')
+    const q = await quote(p, { from: shop, to: customer, parcel, reference: 'order-1' })
+    const results = await Promise.allSettled([buy(p, q), buy(p, q), buy(p, q), buy(p, q), buy(p, q)])
+    expect(buys(fake)).toHaveLength(1)
+    const labels = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []))
+    const refusals = results.flatMap((r) => (r.status === 'rejected' ? [r.reason] : []))
+    expect(labels.length).toBeGreaterThanOrEqual(1)
+    expect(new Set(labels.map((l) => l.tracking)).size).toBe(1)
+    for (const e of refusals) expect([e.code, e.message]).toEqual(['BUY_IN_PROGRESS', expect.stringMatching(/already being bought/)])
+    // Afterwards the quote answers the one label, still without another call.
+    expect(await buy(p, q)).toEqual(labels[0])
+    expect(buys(fake)).toHaveLength(1)
+    // One record, and nobody reaches it from outside.
+    const docs = await p.find({ collection: PURCHASES_SLUG as never, limit: 10 })
+    expect(docs.docs.map((d: Doc) => [d.status, d.shipmentId])).toEqual([['bought', q.shipmentId]])
+    await expect(p.find({ collection: PURCHASES_SLUG as never, overrideAccess: false })).rejects.toThrow()
+  })
+
+  it('sends the carrier an Idempotency-Key made from the quote, on the purchase only', async () => {
+    const { p, fake } = await site('once-key')
+    const a = await quote(p, { from: shop, to: customer, parcel, reference: 'order-1' })
+    const b = await quote(p, { from: shop, to: customer, parcel, reference: 'order-2' })
+    // The provider on its own has no record: its key is what repeats.
+    await fake.provider.buy(a)
+    await fake.provider.buy(a)
+    await fake.provider.buy(b)
+    const keysSent = buys(fake).map((c) => (c as Doc).headers['idempotency-key'])
+    expect(keysSent[0]).toMatch(/^[0-9a-f]{64}$/)
+    expect(keysSent[1]).toBe(keysSent[0])
+    expect(keysSent[2]).not.toBe(keysSent[0])
+    expect(fake.calls.filter((c) => !c.path.endsWith('/buy')).every((c) => (c as Doc).headers['idempotency-key'] === undefined)).toBe(true)
+    void p
+  })
+
+  it('reports a 408, 429, 5xx, dropped or timed-out purchase as unknown, and keeps the quote locked', async () => {
+    let failure: { status: number; code: string } | null = null
+    let drop = false
+    let hang = false
+    const { p, fake } = await site('once-unknown', { fake: { fail: (path) => (path.endsWith('/buy') ? failure : null), drop: (path) => drop && path.endsWith('/buy'), hang: (path) => hang && path.endsWith('/buy'), timeoutMs: 50 } })
+    const cases: [string, () => void][] = [
+      ['408', () => (failure = { status: 408, code: 'TIMEOUT' })],
+      ['429', () => (failure = { status: 429, code: 'RATE_LIMITED' })],
+      ['500', () => (failure = { status: 500, code: 'INTERNAL' })],
+      ['503', () => (failure = { status: 503, code: 'UNAVAILABLE' })],
+      ['a dropped connection', () => (drop = true)],
+      ['a timeout', () => (hang = true)],
+    ]
+    for (const [what, arrange] of cases) {
+      failure = null
+      drop = hang = false
+      const q = await quote(p, { from: shop, to: customer, parcel, reference: 'order-1' })
+      arrange()
+      fake.calls.length = 0
+      const err = await buy(p, q).catch((e) => e)
+      expect([err.code, err.shipmentId], what).toEqual(['MAYBE_BOUGHT', q.shipmentId])
+      // It says the label may exist, and how to find out.
+      expect(err.message, what).toMatch(/may have been bought/)
+      expect(err.message, what).toContain(q.shipmentId)
+      expect(err.message, what).toMatch(/new quote/)
+      expect(err.message, what).not.toMatch(/Nothing was bought/)
+      // The carrier is fine again, and the quote still can't be bought blind.
+      failure = null
+      drop = hang = false
+      const again = await buy(p, q).catch((e) => e)
+      expect([again.code, again.shipmentId], what).toEqual(['MAYBE_BOUGHT', q.shipmentId])
+      expect(buys(fake), what).toHaveLength(1)
+    }
+    const docs = await p.find({ collection: PURCHASES_SLUG as never, limit: 20 })
+    expect(docs.docs.map((d: Doc) => d.status)).toEqual(cases.map(() => 'unknown'))
+  })
+
+  it('frees the quote after a clear refusal, and buys nothing when the claim can’t be stored', async () => {
+    let failure: { status: number; code: string } | null = { status: 422, code: 'SHIPMENT.POSTAGE.FAILURE' }
+    const { p, fake } = await site('once-refused', { fake: { fail: (path) => (path.endsWith('/buy') ? failure : null) } })
+    const q = await quote(p, { from: shop, to: customer, parcel, reference: 'order-1' })
+    await expect(buy(p, q)).rejects.toMatchObject({ code: 'SHIPMENT.POSTAGE.FAILURE' })
+    failure = null
+    expect((await buy(p, q)).shipmentId).toBe(q.shipmentId)
+    expect(buys(fake)).toHaveLength(2)
+    // The database is down: no claim, so no purchase.
+    const q2 = await quote(p, { from: shop, to: customer, parcel, reference: 'order-2' })
+    const create = vi.spyOn(p, 'create').mockRejectedValue(new Error('made-up database failure'))
+    await expect(buy(p, q2)).rejects.toMatchObject({ code: 'NOT_CLAIMED' })
+    await expect(buyLabel(p, { from: shop, to: customer, parcel, reference: 'order-3' })).rejects.toMatchObject({ code: 'NOT_CLAIMED' })
+    create.mockRestore()
+    expect(buys(fake)).toHaveLength(2)
+    await expect(buy(p, { ...q2, shipmentId: '' })).rejects.toMatchObject({ code: 'BAD_QUOTE' })
+    expect(buys(fake)).toHaveLength(2)
+  })
+})
+
+describe('the external-call hook allows only true', () => {
+  it('refuses every answer but exactly true, sync or async, and sends nothing', async () => {
+    let answer: () => unknown = () => true
+    const { p, fake } = await site('hook-true', { beforeExternalCall: (() => answer()) as never })
+    const q = await quote(p, { from: shop, to: customer, parcel, reference: 'r' })
+    const NOT_TRUE: [string, () => unknown][] = [
+      ['false', () => false],
+      ['undefined', () => undefined],
+      ['null', () => null],
+      ['1', () => 1],
+      ["'yes'", () => 'yes'],
+      ["'true'", () => 'true'],
+      ['{}', () => ({})],
+      ['a promise of false', async () => false],
+      ['a promise of undefined', async () => undefined],
+      ['a thrown error', () => {
+        throw new Error('side effects are off here')
+      }],
+      ['a rejected promise', async () => {
+        throw new Error('side effects are off here')
+      }],
+    ]
+    fake.calls.length = 0
+    for (const [what, a] of NOT_TRUE) {
+      answer = a
+      const outcomes = await Promise.allSettled([
+        verifyAddress(p, customer),
+        quote(p, { from: shop, to: customer, parcel, reference: 'r' }),
+        buy(p, q),
+        buyLabel(p, { from: shop, to: customer, parcel, reference: 'r' }),
+        buyReturn(p, { customer, hub: { address: hub }, parcel, reference: 'r' }),
+        refund(p, 'shp_x'),
+      ])
+      expect(outcomes.map((o) => o.status), what).toEqual(Array(6).fill('rejected'))
+      if (!/thrown|rejected/.test(what)) for (const o of outcomes) expect((o as PromiseRejectedResult).reason.code, what).toBe('REFUSED')
+    }
+    expect(fake.calls).toEqual([])
+    // A refused purchase claims nothing, so the quote is still buyable once the site says yes.
+    for (const a of [() => true, async () => true]) {
+      answer = a
+      await verifyAddress(p, customer)
+      await refund(p, 'shp_x')
+    }
+    expect((await buy(p, q)).shipmentId).toBe(q.shipmentId)
+    expect(fake.calls.map((c) => c.path.replace(/shp_[^/]+/, 'shp'))).toEqual(['/addresses', '/shipments/shp/refund', '/addresses', '/shipments/shp/refund', '/shipments/shp/buy'])
   })
 })
 

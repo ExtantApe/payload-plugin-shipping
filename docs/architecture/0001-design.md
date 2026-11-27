@@ -40,7 +40,7 @@ approves. 0.x until it has seen real use.
 | **The webhook endpoint:** signature check with the provider's secret, refusing when not configured (503) or unsigned or wrongly signed (401), an unknown tracker acknowledged and nothing recorded, a too-old event ignored; then dispatch to the owners' handlers | `trackerWebhook.ts`, `endpoints/easypostWebhook.ts` |
 | **Tracking words:** carrier status to plain status (`in_transit`, `delivered`, …), a tracking link per carrier | `notices.ts` (`trackingLink`, the status words); the emails stay with the owner, through Notifications or its own `notify` |
 
-**No collections in 0.1.** Labels are recorded by the plugin that bought them: Sample Kits keeps
+**One collection since 2026-11-26:** `shipping-purchases`, the claim that keeps each quote to one purchase (see `docs/decisions.md`). It isn't a label ledger. Labels are recorded by the plugin that bought them: Sample Kits keeps
 `kitFulfillment.outboundLabels` and `return-labels`, under the same names, so there's no migration. A shared
 `shipping-labels` ledger (every label, its cost and its refund in one place) is the open question below.
 
@@ -53,7 +53,7 @@ shipping({
   provider: easyPost({ apiKey, webhookSecret }),  // the site reads its env and passes them in
   // tests: fakeCarrier({ seed }) from '@extantape/payload-plugin-shipping/testing'
   webhookPath: '/easypost/webhook',            // a root endpoint (config.endpoints): /api/easypost/webhook, as today
-  beforeExternalCall: ({ action, mode, req }) => void | Promise<void>,   // 'buy' | 'refund' | 'quote' | 'verify'; throw to refuse
+  beforeExternalCall: ({ action, mode, req }) => boolean | Promise<boolean>,   // 'buy' | 'refund' | 'quote' | 'verify'; only an exact true allows the call
   handlers: [                                  // owners register; the first that claims an event handles it; must be idempotent
     { onTracker: ({ tracking, status, at, req }) => Promise<'handled' | 'unknown'>,
       onRefund:  ({ shipmentId, status, req }) => Promise<'handled' | 'unknown'> },
@@ -111,7 +111,8 @@ Approved with five changes, all now part of this design:
 3. **Retries arrive twice.** A 500 makes the carrier retry, so every handler must be idempotent, keyed by the event
    id, or else by (tracker, status, datetime). A test sends the same event twice and checks that it writes once.
 4. **Fail closed around every outside call.** `beforeExternalCall` runs before every request that costs money or
-   reaches outside: buy, refund, tracker create, quote, verify. If it throws, the call doesn't happen. The site wires it
+   reaches outside: buy, refund, tracker create, quote, verify. The call happens only when it answers exactly `true`
+   (since 2026-11-26; before that, only a throw stopped it). The site wires it
    to `assertExternalSideEffectAllowed('easypost', …)`. On the site side, `src/lib/env.ts` also refuses a production key
    (`EZAK…`) unless `APP_ENV` is prod, with a test in `env.int.spec.ts`, so a copied prod key can't buy postage from
    test. The platform team offered to add that check itself.
@@ -119,7 +120,8 @@ Approved with five changes, all now part of this design:
    it by accident.
 
 The ledger: not in 0.1. Sample Kits already records each label, with its refund state, on the kit shipment, so the
-money trail exists; revisit when the shop buys labels. No collections, so the site's seed data needn't change.
+money trail exists; revisit when the shop buys labels. Since 2026-11-26 the plugin adds `shipping-purchases`, so the
+site's seed data team needs telling when that merges.
 
 ## Tests (this repo)
 
