@@ -25,8 +25,22 @@ const site = (opts: ShippingOptions, base: Partial<Config> = {}) => {
   const config = shippingPlugin(opts)(base as Config) as Config
   const logged: unknown[] = []
   const keep = (...args: unknown[]) => void logged.push(args)
-  const payload = { config, logger: { error: keep, warn: keep, info: keep, debug: keep } } as unknown as Payload
-  return { payload, config, logged }
+  // The purchases collection, in memory: a unique quoteKey, as the database's index gives (docs/decisions.md, buy once).
+  const rows: Doc[] = []
+  let next = 0
+  const db = {
+    create: async ({ data }: { data: Doc }) => {
+      if (rows.some((r) => r.quoteKey === data.quoteKey)) throw new Error('duplicate key')
+      const row = { ...data, id: String(++next) }
+      rows.push(row)
+      return row
+    },
+    find: async ({ where, limit }: { where: Doc; limit: number }) => ({ docs: rows.filter((r) => r.quoteKey === where.quoteKey.equals).slice(0, limit) }),
+    update: async ({ id, data }: { id: string; data: Doc }) => Object.assign(rows.find((r) => r.id === id)!, data),
+    delete: async ({ id }: { id: string }) => rows.splice(rows.findIndex((r) => r.id === id), 1)[0],
+  }
+  const payload = { config, ...db, logger: { error: keep, warn: keep, info: keep, debug: keep } } as unknown as Payload
+  return { payload, config, logged, rows }
 }
 
 /** Posts a raw body to the plugin's webhook endpoint. */
@@ -72,7 +86,7 @@ describe('the go-ahead fails closed', () => {
   it('refuses with no key before asking the hook or the carrier', async () => {
     const { provider, sent } = recording(() => answer(200, {}), null)
     const asked: string[] = []
-    const { payload } = site({ provider, beforeExternalCall: ({ action }) => void asked.push(action) })
+    const { payload } = site({ provider, beforeExternalCall: ({ action }) => (asked.push(action), true) })
     for (const [name, call] of outsideCalls(payload)) await expect(call(), name).rejects.toMatchObject({ code: 'NO_KEY' })
     expect([asked, sent]).toEqual([[], []])
   })
@@ -153,7 +167,10 @@ describe('secrets', () => {
       ['https://api.easypost.com', `/v2/shipments/${encodeURIComponent(oddId)}/refund`, '', ''],
     ])
     for (const { url, init } of sent) {
-      expect(init.headers).toEqual({ Authorization: `Basic ${KEY_SENT}`, 'Content-Type': 'application/json' })
+      // The purchase also carries the quote's Idempotency-Key (buy once), which holds no secret.
+      const extra = url.endsWith('/buy') ? { 'Idempotency-Key': expect.any(String) } : {}
+      expect(init.headers).toEqual({ Authorization: `Basic ${KEY_SENT}`, 'Content-Type': 'application/json', ...extra })
+      expect(JSON.stringify(init.headers)).not.toContain(KEY)
       expect(url + String(init.body)).not.toContain(KEY)
     }
   })
@@ -232,13 +249,17 @@ describe('the webhook fails closed', () => {
   })
 })
 
-describe('no collections', () => {
-  it('adds one endpoint and its own settings, and leaves the site’s collections, globals and endpoints as they were', () => {
+describe('one collection of its own', () => {
+  it('adds its purchases collection, one endpoint and its own settings, and leaves the site’s collections, globals and endpoints as they were', () => {
     const collections = [{ slug: 'orders', fields: [] }]
     const globals = [{ slug: 'settings', fields: [] }]
     const mine = { path: '/mine', method: 'get' as const, handler: async () => new Response('ok') }
     const { config } = site({ provider: fakeCarrier().provider }, { collections, globals, endpoints: [mine], custom: { other: 1 } })
-    expect([config.collections, config.globals]).toEqual([collections, globals])
+    expect([config.collections!.slice(0, -1), config.globals]).toEqual([collections, globals])
+    // The purchases record holds no name or address, and every access rule answers no.
+    const purchases = config.collections!.at(-1)!
+    expect([purchases.slug, purchases.fields.map((f) => (f as Doc).name)]).toEqual(['shipping-purchases', ['quoteKey', 'status', 'shipmentId', 'label']])
+    for (const rule of ['read', 'create', 'update', 'delete'] as const) expect((purchases.access![rule] as () => boolean)(), rule).toBe(false)
     expect(config.endpoints!.map((e) => [e.path, e.method])).toEqual([['/mine', 'get'], ['/easypost/webhook', 'post']])
     expect(Object.keys(config.custom!).sort()).toEqual(['other', 'shipping'])
   })

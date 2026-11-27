@@ -2,6 +2,33 @@
 
 Kept by this repo's maintainers: after each feature or fix, and at least every 14 days while it changes. Newest first.
 
+## 2026-11-27: the sweep merged with buy once
+
+Suite: 43 tests (`npx vitest run`): 27 against Payload 3.92 with an in-memory MongoDB and a fake carrier, and 16 with no database. Buy once added a purchases collection and an `Idempotency-Key` header, and the hook now has to answer exactly `true`, so three things in the sweep below changed and its 16 tests were brought up to date. No source changed.
+
+- **Promise 12 is now "one collection of its own".** `shipping-purchases` holds the quote key, status, shipment id and label, with no name or address, and every access rule answers no. The test (`safety: one collection of its own`) checks the site's collections, globals and endpoints are kept, the purchases fields, and that read, create, update and delete each answer no.
+- **The key test allows the purchase's `Idempotency-Key`** and checks no header carries the key.
+- **The no-database tests use a small in-memory purchases store** with a unique quote key, standing in for the database's index. Buying each quote once against the real database is covered by the buy-once tests below.
+- **The no-key test's hook answers `true`**, as the hook's type now requires.
+- **Gaps skipped below that are now covered:** a second purchase of one shipment in a later call (buy once). The plugin now writes a claim before a purchase; what happens when writing the outcome fails is listed under buy once's skipped gaps.
+
+## 2026-11-26: buy each quote once, and the external-call hook allows only true
+
+Suite: 21 tests before, 27 after (`npx vitest run`, Payload 3.92, in-memory MongoDB, fake carrier). All six new tests were written first and failed against the old code.
+
+| Promise | Test |
+| --- | --- |
+| A second buy of a bought quote answers the first label, one carrier purchase call; `buyLabel` records its purchase too | `buying each quote once > answers a second buy…` |
+| Five buys at the same moment: one carrier purchase call, one label, the rest get it or `BUY_IN_PROGRESS`; one record; the collection refuses outside reads | `buying each quote once > holds under Promise.all…` |
+| The `Idempotency-Key` header: the same for the same quote, different for another, absent from other calls | `buying each quote once > sends the carrier an Idempotency-Key…` |
+| 408, 429, 500, 503, a dropped connection and a timeout are `MAYBE_BOUGHT` with the shipment id and the steps; a second buy is refused with no carrier call | `buying each quote once > reports a 408, 429, 5xx…` |
+| A clear refusal frees the quote; a claim that can't be stored buys nothing; a quote with no shipment is refused | `buying each quote once > frees the quote…` |
+| Every hook answer but exactly `true` refuses verify, quote, buy, buyLabel, buyReturn and refund, with nothing sent; `true` and a promise of it allow | `the external-call hook allows only true > refuses every answer…` |
+
+- **Mutation checks.** 6 mutations, each a string replace restored from a copy and compared byte for byte afterwards. All 6 fail at least one new test: the hook check made truthy; 408 and 429 treated as refusals; the unique key and the second-claim check both removed; an existing claim ignored; the claim removed after an unknown outcome; the header left out.
+- **Changed tests.** Two older hook tests now end their hook with `return true`, as the new contract asks.
+- **Gaps skipped.** Real EasyPost (never called, so whether it honors the header is unknown). Two server processes at once: the unique key is the database's, and one process with five concurrent calls exercises it. A failed write of the outcome after a purchase (the claim stays and locks the quote; it would need a fault injected between two writes). Databases other than MongoDB.
+
 ## 2026-11-26: sweep after 0.1.0
 
 Suite: 21 tests before, 37 after (`npm test`). The 16 new ones are in `test/safety.test.ts` and need no database: they use the plugin's own config, the fake carrier or a made-up `fetch`, and made-up addresses. Nothing reaches EasyPost. No source changed.
@@ -33,7 +60,7 @@ Suite: 21 tests before, 37 after (`npm test`). The 16 new ones are in `test/safe
   - 8: `shipping: what the security read found > never says "nothing was bought"…`; `safety: money > sends one purchase request per purchase…`, `…calls a redirected purchase, or a label with no shipment id, unclear`
   - 9, 10: `shipping: addresses and parcels` (the other 2)
   - 11: `shipping: the webhook` (all 6), `shipping: what the security read found > ignores replayed refunds…`; `safety: the webhook fails closed` (all 3)
-  - 12: `safety: no collections > adds one endpoint…`
+  - 12: `safety: no collections > adds one endpoint…` (renamed 2026-11-27, see above)
   - 13: `shipping: buying postage > quotes Ground Advantage first…` (`fake: true`); the `/testing` entry is `package.json`'s `exports`
   - 14: `safety: secrets > keeps the key and the webhook secret out of the provider object and the site's config`, `…sends the key only to EasyPost…`
   - 15: `shipping: start-up`
