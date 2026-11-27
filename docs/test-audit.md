@@ -60,7 +60,7 @@ Suite: 21 tests before, 37 after (`npm test`). The 16 new ones are in `test/safe
   - 8: `shipping: what the security read found > never says "nothing was bought"…`; `safety: money > sends one purchase request per purchase…`, `…calls a redirected purchase, or a label with no shipment id, unclear`
   - 9, 10: `shipping: addresses and parcels` (the other 2)
   - 11: `shipping: the webhook` (all 6), `shipping: what the security read found > ignores replayed refunds…`; `safety: the webhook fails closed` (all 3)
-  - 12: `safety: no collections > adds one endpoint…` (renamed 2026-11-27, see above)
+  - 12: `safety: one collection of its own` (renamed 2026-11-27, see above)
   - 13: `shipping: buying postage > quotes Ground Advantage first…` (`fake: true`); the `/testing` entry is `package.json`'s `exports`
   - 14: `safety: secrets > keeps the key and the webhook secret out of the provider object and the site's config`, `…sends the key only to EasyPost…`
   - 15: `shipping: start-up`
@@ -69,11 +69,11 @@ Suite: 21 tests before, 37 after (`npm test`). The 16 new ones are in `test/safe
   - Money: one purchase request per purchase, and an unclear one isn't sent again (a retry added). A failed quote, or no allowed rate, buys nothing (any rate used when none is allowed). A redirected purchase and a label with no shipment id are unclear (each condition removed). 4.35 comes out as 435 cents, and the label shows the rate the carrier charged (`floor` for `round`; the quoted rate used). A rejected refund is reported as rejected (always `submitted`).
   - Secrets: the key and the webhook secret aren't on the provider object or in the site's config (the key added to the object). The key goes only to `api.easypost.com`, in the Authorization header, and a shipment id with slashes or a query stays one path segment (encoding removed, for buy and for refund). Errors don't repeat the key even when the failure does (the network error's text passed on; the carrier's message passed on). A failing handler logs only the error's name, and the 500 and 401 answers carry no detail (the message logged).
   - The webhook: a provider with no webhook, or one that isn't configured, gets 503 even when its check says yes (two changes to the check). `maxEventAgeDays` is honored, with an hour either side of the limit, and 5 minutes ahead passes where 11 doesn't (the limit fixed at 7; the window widened). A signed event with an unreadable date reaches no handler (the comparison rewritten).
-  - No collections: the site's collections, globals and endpoints stay as they were, with one endpoint added (the site's endpoints dropped).
+  - One collection of its own: the site's collections, globals and endpoints stay as they were, with the `shipping-purchases` collection and the webhook endpoint added (the site's endpoints dropped). The purchases record's fields are checked, and each of its access rules answers no.
 - **Gaps skipped.**
-  - Who can see whose addresses and shipments, and signed-out requests: the plugin has no collections, stores nothing and serves no reads, so there is nothing of its own to refuse. Those rules belong to the plugin that records the label, and its tests. The one endpoint is the webhook, whose refusals are covered.
-  - A second purchase of one shipment in a later call: the plugin keeps no record of labels, so that check belongs to the plugin that records them, and to EasyPost. Covered here is what the plugin does itself: one request per call, and no retry of an unclear one.
-  - Half-written records after a carrier error: the plugin writes nothing.
+  - Who can see whose addresses and shipments, and signed-out requests: the `shipping-purchases` record holds a quote key, status, shipment id and label, with no name or address, and every access rule answers no. Rules for the addresses themselves belong to the site and the plugin that stores them, and their tests. The one endpoint is the webhook, whose refusals are covered.
+  - A second purchase of one shipment in a later call: the record is kept per shipment, so a later buy returns the stored label without a carrier call. That case is in the table above (`answers a second buy…`), so it isn't a gap.
+  - Half-written records after a carrier error: a clear refusal removes the purchase record, and an unclear one is kept as `unknown` (the `MAYBE_BOUGHT` tests above). A crash between those writes isn't tested.
   - A `parse` that throws: Payload turns it into a 500 and no handler runs. That is framework behavior.
   - A signed-in user posting to the webhook without a signature: the handler never reads the user, and the unsigned 401 already covers it.
   - Real EasyPost: it costs money and needs a key. The request shapes follow its documentation.
